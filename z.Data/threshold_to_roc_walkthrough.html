@@ -1,0 +1,169 @@
+
+<style>
+.step-btn { padding:6px 14px; border:0.5px solid var(--color-border-secondary); background:transparent; color:var(--color-text-primary); border-radius:var(--border-radius-md); cursor:pointer; font-size:13px; }
+.step-btn:hover { background:var(--color-background-secondary); }
+.step-btn.active { background:var(--color-background-info); color:var(--color-text-info); border-color:var(--color-border-info); }
+.pill { display:inline-block; padding:2px 10px; border-radius:20px; font-size:12px; font-weight:500; }
+</style>
+
+<div style="padding:1rem 0">
+
+<div style="margin-bottom:1rem">
+  <p style="font-size:13px;color:var(--color-text-secondary);margin:0 0 8px">We have 10 patients (5 sick ●, 5 healthy ○). Model gave each a score. Click a threshold to see what happens:</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap" id="thresh-btns">
+    <button class="step-btn" onclick="setThresh(0)">Threshold = 0.9</button>
+    <button class="step-btn" onclick="setThresh(1)">Threshold = 0.7</button>
+    <button class="step-btn active" onclick="setThresh(2)">Threshold = 0.5</button>
+    <button class="step-btn" onclick="setThresh(3)">Threshold = 0.3</button>
+    <button class="step-btn" onclick="setThresh(4)">Threshold = 0.1</button>
+  </div>
+</div>
+
+<svg width="100%" viewBox="0 0 680 180" id="thresh-svg">
+<defs>
+  <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<!-- axis line -->
+<line x1="60" y1="90" x2="640" y2="90" stroke="var(--color-border-primary)" stroke-width="1"/>
+<text class="ts" x="60" y="115" text-anchor="middle">0.0</text>
+<text class="ts" x="640" y="115" text-anchor="middle">1.0</text>
+<text class="ts" x="350" y="115" text-anchor="middle">Score →</text>
+
+<!-- patients: score, sick(1)/healthy(0), label -->
+<!-- sick: 0.95,0.88,0.75,0.61,0.52 | healthy: 0.45,0.38,0.25,0.18,0.08 -->
+</svg>
+
+<div id="stats-row" style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;font-size:13px;align-items:center"></div>
+<div id="roc-hint" style="font-size:13px;color:var(--color-text-secondary);padding:8px 12px;border-left:2px solid var(--color-border-info);margin-top:4px"></div>
+
+</div>
+
+<script>
+const patients = [
+  {score:0.95, sick:true, label:"P1"},
+  {score:0.88, sick:true, label:"P2"},
+  {score:0.75, sick:true, label:"P3"},
+  {score:0.61, sick:true, label:"P4"},
+  {score:0.52, sick:true, label:"P5"},
+  {score:0.45, sick:false, label:"P6"},
+  {score:0.38, sick:false, label:"P7"},
+  {score:0.25, sick:false, label:"P8"},
+  {score:0.18, sick:false, label:"P9"},
+  {score:0.08, sick:false, label:"P10"},
+];
+
+const thresholds = [0.9, 0.7, 0.5, 0.3, 0.1];
+
+function scoreToX(s) { return 60 + s * 580; }
+
+function setThresh(idx) {
+  document.querySelectorAll('.step-btn').forEach((b,i) => b.classList.toggle('active', i===idx));
+  const thr = thresholds[idx];
+  const svg = document.getElementById('thresh-svg');
+  
+  // Remove old dynamic elements
+  svg.querySelectorAll('.dyn').forEach(e=>e.remove());
+  
+  // Draw threshold line
+  const tx = scoreToX(thr);
+  const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+  ln.setAttribute('x1',tx); ln.setAttribute('y1','30');
+  ln.setAttribute('x2',tx); ln.setAttribute('y2','105');
+  ln.setAttribute('stroke','#E24B4A'); ln.setAttribute('stroke-width','2');
+  ln.setAttribute('stroke-dasharray','4 3'); ln.classList.add('dyn');
+  svg.appendChild(ln);
+  
+  const lt = document.createElementNS('http://www.w3.org/2000/svg','text');
+  lt.setAttribute('x',tx); lt.setAttribute('y','24');
+  lt.setAttribute('text-anchor','middle'); lt.setAttribute('class','ts dyn');
+  lt.setAttribute('fill','#E24B4A'); lt.textContent = 'threshold = '+thr;
+  svg.appendChild(lt);
+  
+  // Region labels
+  const rp = document.createElementNS('http://www.w3.org/2000/svg','text');
+  rp.setAttribute('x', Math.min(tx+10, 630)); rp.setAttribute('y','145');
+  rp.setAttribute('class','ts dyn'); rp.setAttribute('fill','#1D9E75');
+  if(tx < 600) rp.textContent = '← Predict POSITIVE';
+  svg.appendChild(rp);
+  
+  const rn = document.createElementNS('http://www.w3.org/2000/svg','text');
+  rn.setAttribute('x', Math.max(tx-10, 70)); rn.setAttribute('y','145');
+  rn.setAttribute('text-anchor','end'); rn.setAttribute('class','ts dyn'); rn.setAttribute('fill','#888780');
+  if(tx > 100) rn.textContent = 'Predict NEGATIVE →';
+  svg.appendChild(rn);
+
+  // Draw patients
+  patients.forEach(p => {
+    const x = scoreToX(p.score);
+    const predicted_pos = p.score >= thr;
+    let color, outcome;
+    if(p.sick && predicted_pos) { color='#1D9E75'; outcome='TP'; }
+    else if(p.sick && !predicted_pos) { color='#D85A30'; outcome='FN'; }
+    else if(!p.sick && predicted_pos) { color='#EF9F27'; outcome='FP'; }
+    else { color='#888780'; outcome='TN'; }
+    
+    const y = p.sick ? 68 : 95;
+    
+    const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    circle.setAttribute('cx',x); circle.setAttribute('cy',y); circle.setAttribute('r',12);
+    circle.setAttribute('fill', color); circle.setAttribute('fill-opacity','0.85');
+    circle.setAttribute('stroke',color); circle.setAttribute('stroke-width','0.5');
+    circle.classList.add('dyn');
+    svg.appendChild(circle);
+    
+    const ct = document.createElementNS('http://www.w3.org/2000/svg','text');
+    ct.setAttribute('x',x); ct.setAttribute('y',y+1);
+    ct.setAttribute('text-anchor','middle'); ct.setAttribute('dominant-baseline','central');
+    ct.setAttribute('font-size','9'); ct.setAttribute('fill','#fff'); ct.setAttribute('font-weight','500');
+    ct.classList.add('dyn'); ct.textContent = outcome;
+    svg.appendChild(ct);
+    
+    const pl = document.createElementNS('http://www.w3.org/2000/svg','text');
+    pl.setAttribute('x',x); pl.setAttribute('y', p.sick ? 52 : 116);
+    pl.setAttribute('text-anchor','middle'); pl.setAttribute('font-size','9');
+    pl.setAttribute('fill','var(--color-text-secondary)');
+    pl.classList.add('dyn'); pl.textContent = p.label;
+    svg.appendChild(pl);
+  });
+  
+  // Sick/healthy row labels
+  const sl = document.createElementNS('http://www.w3.org/2000/svg','text');
+  sl.setAttribute('x','52'); sl.setAttribute('y','68'); sl.setAttribute('text-anchor','end');
+  sl.setAttribute('class','ts dyn'); sl.textContent = 'Sick →';
+  svg.appendChild(sl);
+  const hl = document.createElementNS('http://www.w3.org/2000/svg','text');
+  hl.setAttribute('x','52'); hl.setAttribute('y','95'); hl.setAttribute('text-anchor','end');
+  hl.setAttribute('class','ts dyn'); hl.textContent = 'Healthy →';
+  svg.appendChild(hl);
+
+  // Stats
+  const tp = patients.filter(p=>p.sick && p.score>=thr).length;
+  const fn = patients.filter(p=>p.sick && p.score<thr).length;
+  const fp = patients.filter(p=>!p.sick && p.score>=thr).length;
+  const tn = patients.filter(p=>!p.sick && p.score<thr).length;
+  const tpr = (tp/(tp+fn)).toFixed(2);
+  const fpr = (fp/(fp+tn)).toFixed(2);
+  
+  const sr = document.getElementById('stats-row');
+  sr.innerHTML = `
+    <span class="pill" style="background:#1D9E7520;color:#085041">TP = ${tp}</span>
+    <span class="pill" style="background:#D85A3020;color:#993C1D">FN = ${fn}</span>
+    <span class="pill" style="background:#EF9F2720;color:#854F0B">FP = ${fp}</span>
+    <span class="pill" style="background:#88878020;color:#444441">TN = ${tn}</span>
+    <span style="margin-left:8px;font-weight:500">TPR = ${tpr}</span>
+    <span style="font-weight:500;color:var(--color-text-secondary)">FPR = ${fpr}</span>
+    <span style="color:#378ADD;font-weight:500">→ Plot point (${fpr}, ${tpr}) on ROC curve</span>
+  `;
+  
+  document.getElementById('roc-hint').textContent = 
+    thr===0.9 ? "Very strict threshold: we only call it positive if very confident. We catch fewer sick people (low TPR) but almost never alarm healthy ones (low FPR)." :
+    thr===0.7 ? "Stricter threshold: catching most sick people but still very few false alarms." :
+    thr===0.5 ? "Default threshold: a balanced middle ground. Each threshold gives ONE dot on the ROC curve." :
+    thr===0.3 ? "Lenient threshold: catching almost all sick people, but now falsely alarming some healthy ones." :
+    "Very lenient: everyone is flagged as positive. 100% TPR — but also 100% FPR!";
+}
+
+setThresh(2);
+</script>
